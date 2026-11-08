@@ -57,6 +57,8 @@ fun WaypointApp(vm: GameViewModel = viewModel()) {
                     if (session == null) {
                         LegListScreen(
                             pack = state.pack,
+                            packNames = vm.packNames,
+                            onPack = vm::selectPack,
                             modelReady = vm.modelReady,
                             bestScores = vm.bestScores,
                             mode = vm.mode,

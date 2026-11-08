@@ -45,6 +45,8 @@ sealed interface LegPhase {
     data class Failed(val message: String) : LegPhase
 }
 
+private const val PREF_PACK = "pack"
+
 /** Ширина коридора «твоего выбора», м: погрешность пальца не наказывается. */
 const val CORRIDOR_METERS = 15.0
 
@@ -109,24 +111,54 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     private var analysisJob: Job? = null
     private var memoryJob: Job? = null
 
+    /** Все паки в приложении (папки assets/packs/). */
+    var packNames by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    private val prefs = app.getSharedPreferences("waypoint", android.content.Context.MODE_PRIVATE)
+    private var loadJob: Job? = null
+
     init {
         viewModelScope.launch {
             val assets = getApplication<Application>().assets
+            val names = runCatching { withContext(Dispatchers.IO) { AssetPack.list(assets) } }.getOrElse {
+                packState = PackState.Failed(it.message ?: it.toString())
+                return@launch
+            }
+            packNames = names
+            if (names.isEmpty()) {
+                packState = PackState.Missing
+                return@launch
+            }
+            // Последняя выбранная карта, иначе первая.
+            selectPack(prefs.getString(PREF_PACK, null)?.takeIf { it in names } ?: names.first())
+        }
+    }
+
+    /** Переключиться на другой пак: прежняя модель отпускается, новая грузится в фоне. */
+    fun selectPack(name: String) {
+        if ((packState as? PackState.Ready)?.pack?.dir?.endsWith("/$name") == true) return
+        closeLeg()
+        loadJob?.cancel()
+        model?.cancel()
+        model = null
+        modelReady = false
+        packState = PackState.Loading
+        prefs.edit().putString(PREF_PACK, name).apply()
+        loadJob = viewModelScope.launch {
+            val assets = getApplication<Application>().assets
             packState = try {
-                val names = withContext(Dispatchers.IO) { AssetPack.list(assets) }
-                if (names.isEmpty()) {
-                    PackState.Missing
-                } else {
-                    val pack = withContext(Dispatchers.IO) { AssetPack.open(assets, names.first()) }
-                    model = viewModelScope.async(Dispatchers.Default) { pack.loadModel(assets) }.also { d ->
-                        launch {
-                            runCatching { d.await() }
-                                .onSuccess { modelReady = true }
-                                .onFailure { packState = PackState.Failed("Не удалось загрузить растры пака: ${it.message}") }
-                        }
-                    }
-                    PackState.Ready(pack)
+                val pack = withContext(Dispatchers.IO) { AssetPack.open(assets, name) }
+                val d = viewModelScope.async(Dispatchers.Default) { pack.loadModel(assets) }
+                model = d
+                launch {
+                    runCatching { d.await() }
+                        .onSuccess { modelReady = true }
+                        .onFailure { e -> if (e !is kotlinx.coroutines.CancellationException) packState = PackState.Failed("Не удалось загрузить растры пака: ${e.message}") }
                 }
+                PackState.Ready(pack)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 PackState.Failed(e.message ?: e.toString())
             }

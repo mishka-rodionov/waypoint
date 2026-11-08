@@ -1,6 +1,8 @@
 package waypoint.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +37,8 @@ import kotlin.math.roundToInt
 @Composable
 fun LegListScreen(
     pack: AssetPack,
+    packNames: List<String>,
+    onPack: (String) -> Unit,
     modelReady: Boolean,
     bestScores: Map<String, Int>,
     mode: GameMode,
@@ -63,6 +67,7 @@ fun LegListScreen(
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item(key = "mode") {
+                if (packNames.size > 1) PackPicker(pack, packNames, onPack)
                 ModePicker(mode, onMode, memorySeconds, onMemorySeconds)
                 HorizontalDivider()
             }
@@ -73,6 +78,26 @@ fun LegListScreen(
         }
     }
 }
+
+@Composable
+private fun PackPicker(pack: AssetPack, names: List<String>, onPack: (String) -> Unit) {
+    val current = pack.dir.substringAfterLast('/')
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Карта:", style = MaterialTheme.typography.bodySmall)
+        for (n in names) {
+            // Названия других паков не читаем заранее: показываем имя папки, у текущего — заголовок.
+            val label = if (n == current) pack.meta.title else packLabel(n)
+            FilterChip(selected = n == current, onClick = { onPack(n) }, label = { Text(label) })
+        }
+    }
+}
+
+/** Имя папки пака для показа: gen-7 → «Лес №7». */
+private fun packLabel(name: String): String = if (name.startsWith("gen-")) "Лес №${name.removePrefix("gen-")}" else name.replaceFirstChar { it.uppercase() }
 
 @Composable
 private fun ModePicker(mode: GameMode, onMode: (GameMode) -> Unit, memorySeconds: Int, onMemorySeconds: (Int) -> Unit) {

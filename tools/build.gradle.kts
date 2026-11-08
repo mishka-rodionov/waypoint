@@ -39,3 +39,14 @@ tasks.register<JavaExec>("buildPack") {
     maxHeapSize = "6g"
     args = (project.findProperty("args") as String?)?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
 }
+
+// Пак процедурной карты: ./gradlew :tools:generatePack -Pargs="--seed 7"
+tasks.register<JavaExec>("generatePack") {
+    group = "waypoint"
+    description = "Генерирует лесную карту, отбирает связки и собирает пак в app/src/main/assets/packs/gen-<seed>/"
+    mainClass.set("waypoint.tools.pack.GeneratePackKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    workingDir = rootProject.projectDir
+    maxHeapSize = "6g"
+    args = (project.findProperty("args") as String?)?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
+}
