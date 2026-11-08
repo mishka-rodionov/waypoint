@@ -83,8 +83,12 @@ class RouteEvaluator(private val model: MovementModel) {
         return RouteStats(seconds, polylineLength(route), climb, route, violations)
     }
 
-    fun analyze(from: Vec2, to: Vec2, drawn: List<Vec2>, corridor: Double): LegAnalysis? {
-        val opt = optimal(from, to) ?: return null
+    /**
+     * Разбор нарисованного пути [drawn] (без старта и КП: они добавляются сами).
+     * [knownOptimal] — оптимум, посчитанный заранее (приложение считает его, пока игрок рисует).
+     */
+    fun analyze(from: Vec2, to: Vec2, drawn: List<Vec2>, corridor: Double, knownOptimal: RouteStats? = null): LegAnalysis? {
+        val opt = knownOptimal ?: optimal(from, to) ?: return null
         val route = buildList {
             add(from)
             addAll(drawn)

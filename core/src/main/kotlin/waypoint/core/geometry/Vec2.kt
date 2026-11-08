@@ -55,3 +55,28 @@ data class Box(val minX: Double, val minY: Double, val maxX: Double, val maxY: D
         }
     }
 }
+
+/** Упрощение ломаной по Дугласу — Пекеру: точки ближе [tolerance] метров к упрощённой линии выбрасываются. */
+fun simplifyPolyline(points: List<Vec2>, tolerance: Double): List<Vec2> {
+    if (points.size < 3) return points
+    val keep = BooleanArray(points.size)
+    keep[0] = true
+    keep[points.size - 1] = true
+    val stack = ArrayDeque<Pair<Int, Int>>()
+    stack.addLast(0 to points.size - 1)
+    while (stack.isNotEmpty()) {
+        val (a, b) = stack.removeLast()
+        var worst = -1
+        var worstD = tolerance
+        for (i in a + 1 until b) {
+            val d = distanceToSegment(points[i], points[a], points[b])
+            if (d > worstD) { worstD = d; worst = i }
+        }
+        if (worst >= 0) {
+            keep[worst] = true
+            stack.addLast(a to worst)
+            stack.addLast(worst to b)
+        }
+    }
+    return points.filterIndexed { i, _ -> keep[i] }
+}

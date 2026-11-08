@@ -22,21 +22,27 @@
 - `:core`: чистый Kotlin, **без java.\* и Android** (чтобы позже перевести в Kotlin Multiplatform). Модель карты (`VectorMap`), растр проходимости (`TerrainGrid`, таблица `ISOM_2000`), рельеф (`ElevationGrid`; высоты горизонталей карты подбирает `ContourHeights`: сторона подъёма вдоль каждой горизонтали по SRTM, разница уровней соседей по лучам, целые уровни по остовному дереву с привязкой к SRTM в мёртвой зоне ±1,5 сечения), поиск пути A* с 16 направлениями (`Pathfinder`), оценка маршрута (`RouteEvaluator`; «твой выбор» — `CorridorRouter`: путь обязан пройти ворота вдоль нарисованной линии по порядку).
 - `:tools`: JVM-импорт контента: OMAP (`OmapReader`, подложки не читаются), дистанции `.omap.courses` форка Mapper, горизонтали из шейпфайла, GPX, перевод координат карты ↔ UTM (`Georeferencing`, формула как в Mapper).
 - `:sandbox`: десктоп-песочница этапа 0 на Swing: рисование маршрута мышью, разбор связки, слои «карта / проходимость / рельеф», режим «память».
-- `:app` (Android) появится на этапе 1, будет зависеть от `:core`.
+- `:app` (Android, Jetpack Compose, minSdk 26): список связок пака, экран связки (карта тайлами, рисование пальцем, разбор), режимы «выбор пути» и «память». Зависит только от `:core`; карту и растры берёт из пака в `app/src/main/assets/packs/<карта>/`. Расчёт (оптимум сразу при открытии связки, разбор по «Готово») — на корутинах в `Dispatchers.Default`. Жесты описаны в `MapView` и в концепции («Рисование пальцем»).
+
+Пак карты (`MapPack` в `:core`, сборка `BuildPack` в `:tools`): `meta.json` (сетка, рамка, уровни тайлов), `legs.json` (связки с вариантами `LegExplorer`, посчитанными заранее), `terrain.zbin` и `heights.zbin` (gzip; проходимость — байт-номер в палитре скоростей, высоты — 16-битные разности в сантиметрах), `tiles/<уровень>/<столбец>_<строка>.png` (256 px, уровень 0 — разрешение экспорта Mapper). Расширение растров не `.gz`: AGP распаковывает такие ассеты. Пак содержит чужую карту, поэтому `app/src/main/assets/packs/` в `.gitignore`.
 
 Координаты в ядре — метры на местности в системе карты (x вправо, y вниз).
 
 ## Сборка и запуск
 
-Gradle 9.8.1 (wrapper), Kotlin 2.4.21, JVM toolchain 17.
+Gradle 9.8.1 (wrapper), Kotlin 2.4.21, JVM toolchain 17. Android: AGP 9.4.1, compileSdk 37, targetSdk 36, Compose BOM 2026.09.00 (как в competra-android); SDK — `sdk.dir` в `local.properties` (`~/Library/Android/sdk`).
 
 ```bash
-./gradlew test                      # тесты; тесты на настоящей карте пропускаются, если нет maps/
+./gradlew test                      # тесты (и юнит-тесты :app); тесты на настоящей карте пропускаются, если нет maps/
 ./gradlew :sandbox:run              # песочница: берёт первую .omap и .shp из maps/
 ./gradlew :sandbox:run --args="--map путь.omap --contours горизонтали.shp --gpx трек.gpx --interval 2.5"
 ./gradlew :sandbox:installDist      # затем sandbox/build/install/sandbox/bin/sandbox
 ./gradlew :tools:mineLegs -Pargs="--candidates 600 --count 40"   # отбор интересных связок → maps/<карта>.legs.json
+./gradlew :tools:buildPack -Pargs="--title Мача"   # пак карты → app/src/main/assets/packs/<карта>/ (≈10 с)
+./gradlew :app:assembleDebug        # APK: app/build/outputs/apk/debug/app-debug.apk (пак надо собрать раньше)
 ```
+
+Пак собирается из `maps/`: OMAP, шейпфайл SRTM, экспорт Mapper `<карта>.png` + `.pgw` и, если есть, `<карта>.legs.json`; в пак попадают отобранные связки и связки дистанций из `.omap.courses`. Тест `RealPackTest` проходит путь приложения на собранном паке (пропускается без пака).
 
 Отбор связок (`LegExplorer`): оптимум, непохожие альтернативы (A* со штрафом на коридор уже найденных путей) и «бег напрямик»; интересность растёт, когда второй вариант медленнее оптимума на 3–12% и/или прямая заметно хуже (или перекрыта). Песочница показывает отобранные связки первыми в списке, а варианты — оранжевым пунктиром.
 

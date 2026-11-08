@@ -30,8 +30,12 @@ class ElevationGrid(val spec: GridSpec, val heights: FloatArray) {
         return top + (bottom - top) * ty
     }
 
-    /** Высоты в центрах ячеек другой сетки (например, растра проходимости). */
-    fun resample(target: GridSpec): FloatArray = FloatArray(target.size) { i -> heightAt(target.cellCenter(i)).toFloat() }
+    /**
+     * Высоты в центрах ячеек другой сетки (например, растра проходимости).
+     * Если сетка та же, возвращается сам массив [heights] без копии: на телефоне это экономит десятки мегабайт.
+     */
+    fun resample(target: GridSpec): FloatArray =
+        if (target == spec) heights else FloatArray(target.size) { i -> heightAt(target.cellCenter(i)).toFloat() }
 
     companion object {
         fun flat(bounds: Box) = ElevationGrid(GridSpec.covering(bounds, bounds.width.coerceAtLeast(bounds.height).coerceAtLeast(1.0)), FloatArray(1))

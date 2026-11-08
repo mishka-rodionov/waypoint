@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "waypoint"
 
-include(":core", ":tools", ":sandbox")
+include(":core", ":tools", ":sandbox", ":app")

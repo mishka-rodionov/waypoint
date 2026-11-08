@@ -10,6 +10,7 @@ import waypoint.core.route.LegReport
 import waypoint.core.route.MovementModel
 import waypoint.core.route.RouteEvaluator
 import waypoint.core.route.RouteStats
+import waypoint.core.route.score
 import waypoint.core.terrain.ISOM_2000
 import waypoint.core.terrain.MappedArea
 import waypoint.core.terrain.TerrainGrid
@@ -384,7 +385,7 @@ private class Sandbox(
         if (a.drawn.violations.isNotEmpty()) {
             sb.append("<b>Пересечений непреодолимого: ${a.drawn.violations.size}</b> (×)<br>")
         }
-        val score = (100 * (1 - a.loss.coerceAtLeast(0.0) * 2)).coerceAtLeast(0.0).roundToInt()
+        val score = a.score
         sb.append("<br>Потеря выбора: <b>${pct(a.loss)}</b><br>Очки: <b>$score</b> / 100<br>")
         sb.append("Время на раздумье: ${thinking.roundToInt()} с")
         if (extra.isNotEmpty()) sb.append("<br><br>").append(extra)

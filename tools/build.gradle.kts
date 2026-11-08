@@ -28,3 +28,14 @@ tasks.register<JavaExec>("mineLegs") {
     maxHeapSize = "4g"
     args = (project.findProperty("args") as String?)?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
 }
+
+// Пак карты для приложения: ./gradlew :tools:buildPack -Pargs="--title Мача"
+tasks.register<JavaExec>("buildPack") {
+    group = "waypoint"
+    description = "Собирает пак карты из maps/ (тайлы, проходимость, высоты, связки) в app/src/main/assets/packs/"
+    mainClass.set("waypoint.tools.pack.BuildPackKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    workingDir = rootProject.projectDir
+    maxHeapSize = "6g"
+    args = (project.findProperty("args") as String?)?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
+}
