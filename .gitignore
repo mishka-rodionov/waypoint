@@ -1,0 +1,23 @@
+# Карты не публикуем: права на них у авторов
+maps/
+*.omap
+*.xmap
+*.ocd
+*.omap.autosave
+*.xmap.autosave
+
+# Подготовленные данные и вывод утилит
+out/
+
+# Gradle
+.gradle/
+build/
+.kotlin/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store
