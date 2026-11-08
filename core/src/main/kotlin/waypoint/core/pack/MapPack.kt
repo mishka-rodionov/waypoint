@@ -10,9 +10,10 @@ import kotlin.math.ceil
 /**
  * Пак карты — всё, что нужно приложению без OMAP и SRTM. Папка пака:
  *
- * - `meta.json` — [PackMeta]: сетка растров, рамка карты, уровни тайлов;
- * - `legs.json` — [PackLegs]: связки с заранее найденными вариантами пути;
- * - `terrain.zbin` — проходимость ([TerrainCodec]), сжатая gzip;
+ * - `meta.json` — [PackMeta]: сетка растров, рамка карты, уровни тайлов, масштаб, дисциплины;
+ * - `legs.json` — [PackLegs]: связки с заранее найденными вариантами пути (для других дисциплин — `legs-<id>.json`);
+ * - `terrain.zbin` — проходимость ([TerrainCodec]), сжатая gzip (для других дисциплин — `terrain-<id>.zbin`);
+ * - `scoreo-<id>.json` — [PackScoreSet]: задачи «по выбору» с матрицей времён между КП (если есть);
  * - `heights.zbin` — высоты на той же сетке ([HeightsCodec]), сжатые gzip;
  * - `tiles/<уровень>/<столбец>_<строка>.png` — фон карты; уровень 0 — исходное разрешение экспорта, каждый следующий вдвое грубее.
  *
@@ -29,6 +30,11 @@ object MapPack {
 
     fun tilePath(level: Int, col: Int, row: Int) = "$TILES/$level/${col}_$row.png"
 
+    /** Файлы дисциплины: у кросса — прежние имена (паки без списка дисциплин читаются как раньше). */
+    fun terrainFile(discipline: String) = if (discipline == "forest") TERRAIN else "terrain-$discipline.zbin"
+    fun legsFile(discipline: String) = if (discipline == "forest") LEGS else "legs-$discipline.json"
+    fun scoreFile(discipline: String) = "scoreo-$discipline.json"
+
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -38,6 +44,8 @@ object MapPack {
     fun decodeMeta(text: String): PackMeta = json.decodeFromString(PackMeta.serializer(), text)
     fun encodeLegs(legs: PackLegs): String = json.encodeToString(PackLegs.serializer(), legs)
     fun decodeLegs(text: String): PackLegs = json.decodeFromString(PackLegs.serializer(), text)
+    fun encodeScore(set: PackScoreSet): String = json.encodeToString(PackScoreSet.serializer(), set)
+    fun decodeScore(text: String): PackScoreSet = json.decodeFromString(PackScoreSet.serializer(), text)
 
     private val prettyJson = Json(json) { prettyPrint = true }
 }
@@ -85,6 +93,27 @@ data class PackMeta(
     val runnability: String,
     /** Максимальная относительная скорость таблицы: нужна для эвристики A*. */
     val maxRelativeSpeed: Double,
+    /** Масштаб карты (знаменатель): размеры надпечатки и удобный масштаб рисования. */
+    val scale: Double = 7500.0,
+    /** Дисциплины пака; пусто — только кросс (старые паки). */
+    val disciplines: List<PackDiscipline> = emptyList(),
+) {
+    fun disciplineList(): List<PackDiscipline> =
+        disciplines.ifEmpty { listOf(PackDiscipline("forest", "Кросс", MapPack.TERRAIN, MapPack.LEGS)) }
+}
+
+/**
+ * Дисциплина в паке: свои растр проходимости и связки (рельеф и тайлы общие).
+ * Скорости и уклон берутся из [waypoint.core.terrain.Discipline] по [id].
+ */
+@Serializable
+data class PackDiscipline(
+    val id: String,
+    val title: String,
+    val terrain: String,
+    val legs: String,
+    /** Файл задач «по выбору» или null. */
+    val scoreO: String? = null,
 )
 
 /** Путь в паке: ломаная [xy] (x0, y0, x1, y1, …) в метрах на местности. */
@@ -127,3 +156,35 @@ data class PackLeg(
 data class PackLegs(val map: String, val legs: List<PackLeg>)
 
 private fun round2(x: Double): Double = kotlin.math.round(x * 100.0) / 100.0
+
+/** КП задачи «по выбору»: [points] очков за взятие. */
+@Serializable
+data class PackScoreControl(val id: String, val x: Double, val y: Double, val points: Int) {
+    val position: Vec2 get() = Vec2(x, y)
+}
+
+/**
+ * Задача «по выбору» (рогейн в миниатюре): старт и финиш в одной точке, КП с очками, лимит времени.
+ * [seconds] — матрица времён (n+1)×(n+1) по строкам, индекс 0 — старт, i — КП i−1;
+ * [paths] — оптимальные пути той же матрицы (null на диагонали) для показа в разборе.
+ */
+@Serializable
+data class PackScoreProblem(
+    val id: String,
+    val title: String,
+    val startX: Double,
+    val startY: Double,
+    val limitSeconds: Double,
+    val controls: List<PackScoreControl>,
+    val seconds: List<Double>,
+    val paths: List<PackRoute?>,
+) {
+    val start: Vec2 get() = Vec2(startX, startY)
+    val size: Int get() = controls.size + 1
+
+    fun time(from: Int, to: Int): Double = seconds[from * size + to]
+    fun path(from: Int, to: Int): PackRoute? = paths[from * size + to]
+}
+
+@Serializable
+data class PackScoreSet(val problems: List<PackScoreProblem>)

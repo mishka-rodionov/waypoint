@@ -1,10 +1,8 @@
 package waypoint.tools.pack
 
 import waypoint.core.pack.PackLeg
-import waypoint.core.relief.ElevationGrid
-import waypoint.core.route.MovementModel
 import waypoint.core.course.ControlType
-import waypoint.core.terrain.ISOM_2000
+import waypoint.core.terrain.Discipline
 import waypoint.core.terrain.TerrainGrid
 import waypoint.tools.MapLoader
 import waypoint.tools.geo.WorldImage
@@ -18,7 +16,8 @@ import java.io.File
  * Запуск: `./gradlew :tools:buildPack` (берёт первую .omap и .shp из maps/) или
  * `./gradlew :tools:buildPack -Pargs="--map maps/macha.omap --title Мача"`.
  * Параметры: --map, --contours, --interval (сечение, м), --background (PNG с world-файлом),
- * --legs (отобранные связки), --title, --cell (размер ячейки, м), --out (папка пака).
+ * --legs (отобранные связки), --title, --cell (размер ячейки, м), --out (папка пака), --scale (масштаб карты),
+ * --disciplines (через запятую: forest, mtbo, ski; по умолчанию все три), --score (задач «по выбору» на дисциплину).
  * По умолчанию пак кладётся в app/src/main/assets/packs/<карта>/ (папка в .gitignore).
  */
 fun main(args: Array<String>) {
@@ -38,21 +37,28 @@ fun main(args: Array<String>) {
 
     val started = System.currentTimeMillis()
     val loaded = MapLoader.load(mapFile, contours, opts["interval"]?.toDouble() ?: 2.5, log = ::println)
-    val terrain = TerrainGrid.build(loaded.map, ISOM_2000, cell)
-    val spec = terrain.spec
-    println("Проходимость ${spec.width}×${spec.height}")
-    val heights = loaded.elevation?.resample(spec) ?: FloatArray(spec.size)
-    // Варианты считаем на той же сетке высот, что получит приложение.
-    val model = MovementModel(terrain, ElevationGrid(spec, heights), maxRelativeSpeed = ISOM_2000.maxSpeed)
-
-    val legs = collectLegs(loaded, legsFile)
-    println("Связок: ${legs.size}, ищу варианты…")
-    val reports = LegMining.explore(model, legs.map { it.from to it.to })
-    val packLegs = legs.zip(reports).map { (l, r) -> PackAssembler.withReport(l, r) }
+    val disciplines = PackAssembler.parseDisciplines(opts["disciplines"], listOf(Discipline.FOREST, Discipline.MTBO, Discipline.SKI))
+    val scoreCount = opts["score"]?.toInt() ?: 3
+    // Высоты на сетке растра: одна на все дисциплины (сетка у всех одна — рамка карты и шаг).
+    var heights: FloatArray? = null
+    val heightsFor = { t: TerrainGrid -> heights ?: (loaded.elevation?.resample(t.spec) ?: FloatArray(t.spec.size)).also { heights = it } }
+    val data = disciplines.map { d ->
+        PackAssembler.discipline(d, loaded.map, cell, heightsFor, base, scoreCount, seed = 11) { model, _ ->
+            if (d == Discipline.FOREST) {
+                // Кросс: отобранные заранее связки (mineLegs) и связки дистанций карты.
+                val legs = collectLegs(loaded, legsFile)
+                println("Связок: ${legs.size}, ищу варианты…")
+                val reports = LegMining.explore(model, legs.map { it.from to it.to })
+                legs.zip(reports).map { (l, r) -> PackAssembler.withReport(l, r) }
+            } else {
+                PackAssembler.minedLegs(model, loaded.map, "$base-${d.id}", candidates = 400, count = 30, minLen = 400.0, maxLen = 1500.0, seed = 5)
+            }
+        }
+    }
 
     println("Тайлы фона из $background")
     val image = WorldImage.read(background, loaded.georef)
-    PackAssembler.write(out, base, opts["title"] ?: loaded.name, loaded.map.bounds, terrain, heights, ISOM_2000, packLegs, image)
+    PackAssembler.write(out, base, opts["title"] ?: loaded.name, loaded.map.bounds, opts["scale"]?.toDouble() ?: 7500.0, data, heights!!, image)
     println("Готово за ${(System.currentTimeMillis() - started) / 1000} с")
 }
 

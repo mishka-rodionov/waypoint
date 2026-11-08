@@ -66,6 +66,13 @@ class IsomRenderer(private val scale: Double = 7500.0) {
             val shape = path(f.parts, closed = true)
             when (val code = f.code.substringBefore('.')) {
                 "310", "311" -> hatch(g, shape, if (code == "310") 0.18 else 0.12, if (code == "310") 0.75 else 1.6, ::mmPx)
+                "526" -> {
+                    g.color = Color(0x8C8C8C)
+                    g.fill(shape)
+                    g.color = Color.BLACK
+                    g.stroke = stroke(0.14)
+                    g.draw(shape)
+                }
                 "301", "302" -> {
                     g.color = Color(0x7FD2FF)
                     g.fill(shape)
@@ -113,6 +120,7 @@ class IsomRenderer(private val scale: Double = 7500.0) {
             "103" -> brown to stroke(0.14, doubleArrayOf(2.5, 0.25))
             "305" -> blue to stroke(0.25, null)
             "306" -> blue to stroke(0.18, doubleArrayOf(2.0, 0.25))
+            "524" -> Color.BLACK to stroke(0.5, null)
             "504" -> Color.BLACK to stroke(0.35, null)
             "505" -> Color.BLACK to stroke(0.35, doubleArrayOf(3.0, 0.25))
             "506" -> Color.BLACK to stroke(0.25, doubleArrayOf(2.0, 0.25))

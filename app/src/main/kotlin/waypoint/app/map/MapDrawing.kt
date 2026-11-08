@@ -32,8 +32,6 @@ object MapColors {
     val variant = Color(0xFFE08000)
 }
 
-/** Масштаб карты для надпечатки: 1:7500 → 7.5 м на местности на миллиметр карты. */
-private const val METERS_PER_MAP_MM = 7.5
 
 /**
  * Фон карты тайлами. Уровень — самый грубый, у которого пиксель тайла не крупнее пикселя экрана;
@@ -102,11 +100,11 @@ fun DrawScope.drawWorldLine(t: ViewTransform, points: List<Vec2>, color: Color, 
 
 /**
  * Надпечатка связки по ISOM: треугольник старта (сторона 7 мм), круг КП (6 мм), линия между ними с разрывом у знаков.
- * Размеры — в метрах местности, но не мельче [minPx] на экране.
+ * Размеры — в метрах местности ([metersPerMm] — метров в миллиметре карты: 7.5 при 1:7500), но не мельче [minPx] на экране.
  */
-fun DrawScope.drawCourse(t: ViewTransform, from: Vec2, to: Vec2, fromStart: Boolean, minPx: Float) {
-    val px = { mm: Double -> max(minPx, (mm * METERS_PER_MAP_MM * t.scale).toFloat()) }
-    val lineW = max(minPx / 6f, (0.35 * METERS_PER_MAP_MM * t.scale).toFloat())
+fun DrawScope.drawCourse(t: ViewTransform, from: Vec2, to: Vec2, fromStart: Boolean, minPx: Float, metersPerMm: Double = 7.5) {
+    val px = { mm: Double -> max(minPx, (mm * metersPerMm * t.scale).toFloat()) }
+    val lineW = max(minPx / 6f, (0.35 * metersPerMm * t.scale).toFloat())
     val stroke = Stroke(width = lineW)
     val a = t.toScreen(from)
     val b = t.toScreen(to)
@@ -160,4 +158,28 @@ fun DrawScope.drawRevealedTiles(t: ViewTransform, cache: TileCache, lines: List<
     drawPath(mask, Color.Black, style = Stroke(width = (2 * radiusM * t.scale).toFloat(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     drawTiles(t, cache, BlendMode.SrcIn)
     drawContext.canvas.restore()
+}
+
+/** Знаки «по выбору»: треугольник старта и двойной круг финиша в одной точке, круги КП (номера подписывает экран). */
+fun DrawScope.drawScoreCourse(t: ViewTransform, start: Vec2, controls: List<Vec2>, selected: Set<Int>, minPx: Float, metersPerMm: Double) {
+    val px = { mm: Double -> max(minPx, (mm * metersPerMm * t.scale).toFloat()) }
+    val lineW = max(minPx / 6f, (0.35 * metersPerMm * t.scale).toFloat())
+    val stroke = Stroke(width = lineW)
+    val s = t.toScreen(start)
+    val triR = px(7.0 / sqrt(3.0))
+    val path = Path().apply {
+        moveTo(s.x, s.y - triR)
+        lineTo(s.x + triR * sqrt(3f) / 2, s.y + triR / 2)
+        lineTo(s.x - triR * sqrt(3f) / 2, s.y + triR / 2)
+        close()
+    }
+    drawPath(path, MapColors.course, style = stroke)
+    drawCircle(MapColors.course, px(3.5), s, style = stroke)
+    drawCircle(MapColors.course, px(2.5), s, style = stroke)
+    controls.forEachIndexed { i, c ->
+        val o = t.toScreen(c)
+        val r = px(3.0)
+        if ((i + 1) in selected) drawCircle(MapColors.course.copy(alpha = 0.22f), r, o)
+        drawCircle(MapColors.course, r, o, style = stroke)
+    }
 }

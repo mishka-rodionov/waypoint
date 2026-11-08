@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import waypoint.app.map.TileCache
 import waypoint.app.ui.LegListScreen
 import waypoint.app.ui.LegScreen
+import waypoint.app.ui.ScoreScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,21 +55,11 @@ fun WaypointApp(vm: GameViewModel = viewModel()) {
                     // Кэш тайлов общий для всех связок пака.
                     val tiles = remember(state.pack) { TileCache(context.assets, state.pack.dir, state.pack.meta.tiles, scope) }
                     val session = vm.session
-                    if (session == null) {
-                        LegListScreen(
-                            pack = state.pack,
-                            packNames = vm.packNames,
-                            onPack = vm::selectPack,
-                            modelReady = vm.modelReady,
-                            bestScores = vm.bestScores,
-                            mode = vm.mode,
-                            onMode = { vm.mode = it },
-                            memorySeconds = vm.memorySeconds,
-                            onMemorySeconds = { vm.memorySeconds = it },
-                            onOpen = vm::openLeg,
-                        )
-                    } else {
-                        LegScreen(vm, session, tiles, onBack = vm::closeLeg)
+                    val score = vm.scoreSession
+                    when {
+                        session != null -> LegScreen(vm, session, tiles, state.pack.meta.scale, onBack = vm::closeLeg)
+                        score != null -> ScoreScreen(vm, score, tiles, state.pack.meta.scale, onBack = vm::closeLeg)
+                        else -> LegListScreen(vm, state.pack)
                     }
                 }
             }

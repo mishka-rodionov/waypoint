@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,10 +20,13 @@ import kotlinx.coroutines.withContext
 import waypoint.app.data.AssetPack
 import waypoint.core.geometry.Vec2
 import waypoint.core.pack.PackLeg
+import waypoint.core.pack.PackScoreProblem
 import waypoint.core.route.LegAnalysis
 import waypoint.core.route.MovementModel
 import waypoint.core.route.RouteEvaluator
 import waypoint.core.route.RouteStats
+import waypoint.core.route.ScoreO
+import waypoint.core.route.ScoreResult
 import waypoint.core.route.score
 
 sealed interface PackState {
@@ -33,8 +36,8 @@ sealed interface PackState {
     data class Ready(val pack: AssetPack) : PackState
 }
 
-/** Режим игры: карта видна всё время или показывается на время и скрывается («память»). */
-enum class GameMode(val title: String) { ROUTE("Выбор пути"), MEMORY("Память") }
+/** Режим игры: выбор пути, «память» (карта показывается на время) или «по выбору» (порядок КП). */
+enum class GameMode(val title: String) { ROUTE("Выбор пути"), MEMORY("Память"), SCORE("По выбору") }
 
 sealed interface LegPhase {
     /** Режим «память»: карта видна, идёт обратный отсчёт; рисовать ещё нельзя. */
@@ -46,6 +49,7 @@ sealed interface LegPhase {
 }
 
 private const val PREF_PACK = "pack"
+private const val PREF_DISCIPLINE = "discipline"
 
 /** Ширина коридора «твоего выбора», м: погрешность пальца не наказывается. */
 const val CORRIDOR_METERS = 15.0
@@ -54,7 +58,7 @@ const val CORRIDOR_METERS = 15.0
  * Одна попытка связки: нарисованные штрихи (каждый начинается с конца предыдущего) и стадия разбора.
  * Оптимум считается в фоне сразу при открытии связки, пока игрок думает и рисует.
  */
-class LegSession(val leg: PackLeg, val mode: GameMode, val optimal: Deferred<RouteStats?>) {
+class LegSession(val leg: PackLeg, val mode: GameMode, val discipline: String, val optimal: Deferred<RouteStats?>) {
     val strokes = mutableStateListOf<List<Vec2>>()
     var phase by mutableStateOf<LegPhase>(LegPhase.Drawing)
 
@@ -64,8 +68,8 @@ class LegSession(val leg: PackLeg, val mode: GameMode, val optimal: Deferred<Rou
     /** С какого момента считается время на раздумье (в «памяти» — с момента, когда карта скрылась). */
     var shownAt = SystemClock.elapsedRealtime()
 
-    /** Ключ результата: очки в разных режимах не смешиваются. */
-    val scoreKey: String get() = scoreKey(mode, leg.id)
+    /** Ключ результата: очки в разных режимах и дисциплинах не смешиваются. */
+    val scoreKey: String get() = scoreKey(mode, discipline, leg.id)
 
     /** Откуда продолжать линию: конец последнего штриха или старт. */
     val lineEnd: Vec2 get() = strokes.lastOrNull()?.lastOrNull() ?: leg.from
@@ -86,21 +90,55 @@ class LegSession(val leg: PackLeg, val mode: GameMode, val optimal: Deferred<Rou
     }
 }
 
-fun scoreKey(mode: GameMode, legId: String) = "${mode.name}:$legId"
+/** Итог задачи «по выбору»: план игрока и лучший план. Очки 0–100 — доля от лучшего результата. */
+data class ScoreOutcome(val player: ScoreResult, val best: ScoreResult, val thinkingSeconds: Double) {
+    val score: Int get() = if (best.net <= 0) 100 else (100.0 * player.net / best.net).toInt().coerceIn(0, 100)
+}
+
+/** Попытка задачи «по выбору»: порядок КП (номера 1…n), итог — после «Финиш». */
+class ScoreSession(val problem: PackScoreProblem, val discipline: String) {
+    val order = mutableStateListOf<Int>()
+    var outcome by mutableStateOf<ScoreOutcome?>(null)
+    var shownAt = SystemClock.elapsedRealtime()
+        private set
+
+    val scoreKey: String get() = scoreKey(GameMode.SCORE, discipline, problem.id)
+
+    val points: IntArray get() = IntArray(problem.size) { if (it == 0) 0 else problem.controls[it - 1].points }
+
+    fun restart() {
+        order.clear()
+        outcome = null
+        shownAt = SystemClock.elapsedRealtime()
+    }
+}
+
+fun scoreKey(mode: GameMode, discipline: String, id: String) = "${mode.name}:$discipline:$id"
 
 class GameViewModel(app: Application) : AndroidViewModel(app) {
     var packState by mutableStateOf<PackState>(PackState.Loading)
+        private set
+
+    /** Все паки в приложении (папки assets/packs/). */
+    var packNames by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    /** Дисциплина внутри пака: свой растр проходимости, свои связки и задачи. */
+    var discipline by mutableStateOf("forest")
         private set
 
     /** Модель движения грузится в фоне после списка связок. */
     var modelReady by mutableStateOf(false)
         private set
     private var model: Deferred<MovementModel>? = null
+    private var heights: Deferred<FloatArray>? = null
 
     var session by mutableStateOf<LegSession?>(null)
         private set
+    var scoreSession by mutableStateOf<ScoreSession?>(null)
+        private set
 
-    /** Лучшие очки по связкам за запуск приложения; ключ — [scoreKey]. */
+    /** Лучшие очки; ключ — [scoreKey]. */
     val bestScores = mutableStateMapOf<String, Int>()
 
     var mode by mutableStateOf(GameMode.ROUTE)
@@ -110,13 +148,16 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     private var analysisJob: Job? = null
     private var memoryJob: Job? = null
-
-    /** Все паки в приложении (папки assets/packs/). */
-    var packNames by mutableStateOf<List<String>>(emptyList())
-        private set
-
-    private val prefs = app.getSharedPreferences("waypoint", android.content.Context.MODE_PRIVATE)
     private var loadJob: Job? = null
+    private val prefs = app.getSharedPreferences("waypoint", android.content.Context.MODE_PRIVATE)
+
+    val pack: AssetPack? get() = (packState as? PackState.Ready)?.pack
+
+    /** Связки текущей дисциплины. */
+    val legs: List<PackLeg> get() = pack?.legs?.get(discipline).orEmpty()
+
+    /** Задачи «по выбору» текущей дисциплины. */
+    val scoreProblems: List<PackScoreProblem> get() = pack?.scoreProblems?.get(discipline).orEmpty()
 
     init {
         viewModelScope.launch {
@@ -137,41 +178,65 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Переключиться на другой пак: прежняя модель отпускается, новая грузится в фоне. */
     fun selectPack(name: String) {
-        if ((packState as? PackState.Ready)?.pack?.dir?.endsWith("/$name") == true) return
+        if (pack?.name == name) return
         closeLeg()
         loadJob?.cancel()
         model?.cancel()
+        heights?.cancel()
         model = null
+        heights = null
         modelReady = false
         packState = PackState.Loading
         prefs.edit().putString(PREF_PACK, name).apply()
         loadJob = viewModelScope.launch {
             val assets = getApplication<Application>().assets
-            packState = try {
-                val pack = withContext(Dispatchers.IO) { AssetPack.open(assets, name) }
-                val d = viewModelScope.async(Dispatchers.Default) { pack.loadModel(assets) }
-                model = d
-                launch {
-                    runCatching { d.await() }
-                        .onSuccess { modelReady = true }
-                        .onFailure { e -> if (e !is kotlinx.coroutines.CancellationException) packState = PackState.Failed("Не удалось загрузить растры пака: ${e.message}") }
-                }
-                PackState.Ready(pack)
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            try {
+                val p = withContext(Dispatchers.IO) { AssetPack.open(assets, name) }
+                heights = viewModelScope.async(Dispatchers.Default) { p.loadHeights(assets) }
+                val saved = prefs.getString(PREF_DISCIPLINE, null)
+                discipline = p.disciplines.firstOrNull { it.id == saved }?.id ?: p.disciplines.first().id
+                packState = PackState.Ready(p)
+                loadModel(p)
+            } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                PackState.Failed(e.message ?: e.toString())
+                packState = PackState.Failed(e.message ?: e.toString())
             }
         }
     }
 
+    fun selectDiscipline(id: String) {
+        val p = pack ?: return
+        if (id == discipline || p.disciplines.none { it.id == id }) return
+        closeLeg()
+        discipline = id
+        prefs.edit().putString(PREF_DISCIPLINE, id).apply()
+        if (mode == GameMode.SCORE && scoreProblems.isEmpty()) mode = GameMode.ROUTE
+        loadModel(p)
+    }
+
+    private fun loadModel(p: AssetPack) {
+        model?.cancel()
+        modelReady = false
+        val id = discipline
+        val assets = getApplication<Application>().assets
+        val h = heights ?: return
+        val d = viewModelScope.async(Dispatchers.Default) { p.loadModel(assets, id, h.await()) }
+        model = d
+        viewModelScope.launch {
+            runCatching { d.await() }
+                .onSuccess { if (model === d) modelReady = true }
+                .onFailure { e -> if (e !is CancellationException) packState = PackState.Failed("Не удалось загрузить растры пака: ${e.message}") }
+        }
+    }
+
+    // ---------- связки ----------
+
     fun openLeg(leg: PackLeg) {
         analysisJob?.cancel()
         val m = model ?: return
-        val optimal = viewModelScope.async(Dispatchers.Default, start = CoroutineStart.DEFAULT) {
-            RouteEvaluator(m.await()).optimal(leg.from, leg.to)
-        }
-        val s = LegSession(leg, mode, optimal)
+        val optimal = viewModelScope.async(Dispatchers.Default) { RouteEvaluator(m.await()).optimal(leg.from, leg.to) }
+        val s = LegSession(leg, if (mode == GameMode.SCORE) GameMode.ROUTE else mode, discipline, optimal)
         session = s
         startAttempt(s)
     }
@@ -210,15 +275,17 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         analysisJob?.cancel()
         session?.optimal?.cancel()
         session = null
+        scoreSession = null
     }
 
     /** Следующая связка списка после текущей (по кругу). */
     fun nextLeg() {
-        val legs = (packState as? PackState.Ready)?.pack?.legs ?: return
+        val list = legs
         val cur = session?.leg ?: return
-        val i = legs.indexOfFirst { it.id == cur.id }
+        if (list.isEmpty()) return
+        val i = list.indexOfFirst { it.id == cur.id }
         session?.optimal?.cancel()
-        openLeg(legs[(i + 1) % legs.size])
+        openLeg(list[(i + 1) % list.size])
     }
 
     fun undoStroke() {
@@ -256,12 +323,71 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                     if (a == null) {
                         LegPhase.Failed("КП недостижим: путь не найден.")
                     } else {
-                        bestScores[s.scoreKey] = maxOf(bestScores[s.scoreKey] ?: 0, a.score)
+                        record(s.scoreKey, a.score)
                         LegPhase.Result(a, thinking)
                     }
                 },
                 onFailure = { LegPhase.Failed("Ошибка расчёта: ${it.message}") },
             )
         }
+    }
+
+    // ---------- «по выбору» ----------
+
+    fun openScore(problem: PackScoreProblem) {
+        closeLeg()
+        scoreSession = ScoreSession(problem, discipline)
+    }
+
+    /** Нажатие на КП [index] (1…n): добавить в конец плана; повторное нажатие на последний — убрать. */
+    fun toggleControl(index: Int) {
+        val s = scoreSession ?: return
+        if (s.outcome != null) return
+        when {
+            s.order.lastOrNull() == index -> s.order.removeAt(s.order.lastIndex)
+            index !in s.order -> s.order.add(index)
+        }
+    }
+
+    fun undoControl() {
+        val s = scoreSession ?: return
+        if (s.outcome == null && s.order.isNotEmpty()) s.order.removeAt(s.order.lastIndex)
+    }
+
+    fun clearControls() {
+        val s = scoreSession ?: return
+        if (s.outcome == null) s.order.clear()
+    }
+
+    /** Финиш: оценка плана игрока и лучший план — по матрице времён пака, без поиска пути. */
+    fun finishScore() {
+        val s = scoreSession ?: return
+        if (s.outcome != null) return
+        val thinking = (SystemClock.elapsedRealtime() - s.shownAt) / 1000.0
+        viewModelScope.launch {
+            val p = s.problem
+            val points = s.points
+            val (player, best) = withContext(Dispatchers.Default) {
+                ScoreO.evaluate(s.order.toList(), points, p.limitSeconds, p::time) to
+                    ScoreO.solve(p.controls.size, points, p.limitSeconds, p::time)
+            }
+            if (scoreSession !== s) return@launch
+            val outcome = ScoreOutcome(player, best, thinking)
+            s.outcome = outcome
+            record(s.scoreKey, outcome.score)
+        }
+    }
+
+    fun retryScore() = scoreSession?.restart()
+
+    fun nextScore() {
+        val list = scoreProblems
+        val cur = scoreSession?.problem ?: return
+        if (list.isEmpty()) return
+        openScore(list[(list.indexOfFirst { it.id == cur.id } + 1) % list.size])
+    }
+
+    private fun record(key: String, score: Int) {
+        bestScores[key] = maxOf(bestScores[key] ?: 0, score)
     }
 }

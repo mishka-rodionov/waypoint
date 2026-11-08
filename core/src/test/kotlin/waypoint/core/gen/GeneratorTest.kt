@@ -78,3 +78,18 @@ class GeneratorTest {
         assertTrue(opt.seconds > 0)
     }
 }
+
+class TownGeneratorTest {
+    @Test
+    fun `город — дома непроходимы, улицы связны`() {
+        val town = TownGenerator(TownParams(seed = 3, width = 400.0, height = 400.0)).generate()
+        val codes = town.map.features.groupingBy { it.code }.eachCount()
+        assertTrue((codes["526"] ?: 0) > 20, "дома: $codes")
+        val terrain = TerrainGrid.build(town.map, ISOM_2000, 1.0)
+        val blocked = terrain.speed.count { it <= 0f }.toDouble() / terrain.speed.size
+        assertTrue(blocked in 0.15..0.7, "застроено $blocked")
+        val model = waypoint.core.terrain.Discipline.SPRINT.model(terrain, town.elevation)
+        // Из угла в угол по городу путь есть (улицы связны).
+        assertNotNull(RouteEvaluator(model).optimal(Vec2(2.0, 2.0), Vec2(398.0, 398.0)))
+    }
+}

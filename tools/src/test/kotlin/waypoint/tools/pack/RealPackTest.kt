@@ -1,7 +1,7 @@
 package waypoint.tools.pack
 
 import waypoint.core.relief.ElevationGrid
-import waypoint.core.route.MovementModel
+import waypoint.core.terrain.Discipline
 import waypoint.core.route.RouteEvaluator
 import java.io.File
 import kotlin.test.Test
@@ -18,7 +18,7 @@ class RealPackTest {
         val dir = File("../app/src/main/assets/packs").listFiles()?.firstOrNull { File(it, "meta.json").exists() } ?: return
         var t = System.currentTimeMillis()
         val pack = PackFiles.read(dir)
-        val model = MovementModel(pack.terrain, ElevationGrid(pack.spec, pack.heights), maxRelativeSpeed = pack.meta.maxRelativeSpeed)
+        val model = Discipline.FOREST.model(pack.terrain, ElevationGrid(pack.spec, pack.heights))
         println("пак ${pack.meta.name}: ${pack.spec.width}×${pack.spec.height}, связок ${pack.legs.legs.size}, чтение ${System.currentTimeMillis() - t} мс")
         assertTrue(model.heights === pack.heights, "высоты на той же сетке не копируются")
         val ev = RouteEvaluator(model)
@@ -35,6 +35,14 @@ class RealPackTest {
                 "потеря ${"%.1f".format(a.loss * 100)}% при разрыве ${"%.1f".format(gap * 100)}%, разбор ${System.currentTimeMillis() - t} мс")
             assertTrue(a.loss >= -1e-6)
             assertTrue(kotlin.math.abs(a.loss - gap) < 0.05, "потеря ${a.loss} далека от разрыва $gap")
+        }
+        // Задачи «по выбору»: оптимум из матрицы пака не хуже, чем взять только ближний КП.
+        for (d in pack.disciplines) {
+            val problem = d.score?.problems?.firstOrNull() ?: continue
+            val points = IntArray(problem.size) { if (it == 0) 0 else problem.controls[it - 1].points }
+            val best = waypoint.core.route.ScoreO.solve(problem.controls.size, points, problem.limitSeconds, problem::time)
+            println("${d.info.title}, ${problem.title}: лучший план ${best.order} — ${best.points} очков, ${best.seconds.toInt()} с из ${problem.limitSeconds.toInt()}")
+            assertTrue(best.net > 0)
         }
     }
 }

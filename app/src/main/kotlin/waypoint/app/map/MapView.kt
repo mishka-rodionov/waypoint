@@ -47,6 +47,8 @@ data class MapOverlay(
     val hideMap: Boolean = false,
     /** Полуширина полосы, где при скрытой карте она проявляется под линией, м. */
     val revealRadius: Double = 15.0,
+    /** Масштаб карты (знаменатель): размер надпечатки и удобный масштаб рисования. */
+    val mapScale: Double = 7500.0,
 )
 
 data class OverlayRoute(val points: List<Vec2>, val color: Color, val widthDp: Float, val dashed: Boolean = false, val alpha: Float = 0.9f)
@@ -66,8 +68,11 @@ class DrawingState {
 
 private enum class Mode { DRAW, PAN, TRANSFORM }
 
-/** Масштаб карты на экране при рисовании (1:6000): мельче — неудобно попадать пальцем, крупнее — мало видно. */
-const val DRAWING_MAP_SCALE = 6000.0
+/**
+ * Масштаб карты на экране при рисовании — доля масштаба карты (0.8: 1:7500 → 1:6000, спринт 1:4000 → 1:3200).
+ * Мельче — неудобно попадать пальцем, крупнее — мало видно.
+ */
+const val DRAWING_ZOOM = 0.8
 
 /**
  * Куда сдвинуть карту после штриха, чтобы продолжать было удобно; null — сдвигать не нужно.
@@ -118,7 +123,7 @@ private fun roomAhead(p: Offset, dir: Offset, w: Float, h: Float): Float {
  * - длинная линия рисуется несколькими штрихами; пока палец ведёт штрих, карта не двигается
  *   (автопрокрутка у края пробовалась и убрана: карта уезжала из-под пальца, и линия искажалась);
  * - если карта мельче масштаба рисования (длинная связка вписана целиком), при касании ручки она плавно
- *   приближается вокруг пальца до 1:[DRAWING_MAP_SCALE]; точка под пальцем остаётся на месте;
+ *   приближается вокруг пальца до масштаба рисования ([DRAWING_ZOOM] от масштаба карты); точка под пальцем остаётся на месте;
  * - после штриха карта плавно сдвигается: конец линии ближе к центру, впереди — место в сторону КП
  *   (или в кадре и конец линии, и КП, если он близко); любой жест прерывает это движение;
  * - во время штриха в верхнем углу (подальше от пальца) — лупа ×2 с перекрестием: видно, что под пальцем.
@@ -140,8 +145,8 @@ fun MapView(
     val handleRadius = with(density) { 22.dp.toPx() }
     val grabRadius = with(density) { 40.dp.toPx() }
     val minStep = with(density) { 2.dp.toPx() }
-    // Масштаб для рисования — как карта 1:DRAWING_MAP_SCALE на экране: 1 мм экрана = DRAWING_MAP_SCALE / 1000 м.
-    val drawScale = density.density * 160.0 / 25.4 / (DRAWING_MAP_SCALE / 1000.0)
+    // Масштаб для рисования — карта чуть крупнее бумажной (1:6000 для 1:7500): 1 мм экрана = знаменатель / 1000 м.
+    val drawScale = density.density * 160.0 / 25.4 / (overlay.mapScale * DRAWING_ZOOM / 1000.0)
     val enabled by rememberUpdatedState(drawingEnabled)
     val end by rememberUpdatedState(lineEnd)
     val target by rememberUpdatedState(overlay.to)
@@ -242,7 +247,7 @@ private fun DrawScope.drawMapLayer(
 
 /** Надпечатка, линии разбора и линия игрока в виде [t]. */
 private fun DrawScope.drawScene(t: ViewTransform, overlay: MapOverlay, strokes: List<List<Vec2>>, current: List<Vec2>, dp: Float) {
-    drawCourse(t, overlay.from, overlay.to, overlay.fromStart, minPx = 10 * dp)
+    drawCourse(t, overlay.from, overlay.to, overlay.fromStart, minPx = 10 * dp, metersPerMm = overlay.mapScale / 1000)
     for (r in overlay.routes) {
         drawWorldLine(t, r.points, r.color, r.widthDp * dp, dash = if (r.dashed) 9 * dp else 0f, alpha = r.alpha)
     }

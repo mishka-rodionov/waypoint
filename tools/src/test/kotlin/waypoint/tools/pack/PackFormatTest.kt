@@ -7,6 +7,10 @@ import waypoint.core.grid.GridSpec
 import waypoint.core.pack.HeightsCodec
 import waypoint.core.pack.MapPack
 import waypoint.core.pack.PackBox
+import waypoint.core.pack.PackDiscipline
+import waypoint.core.pack.PackScoreControl
+import waypoint.core.pack.PackScoreProblem
+import waypoint.core.pack.PackScoreSet
 import waypoint.core.pack.PackGrid
 import waypoint.core.pack.PackLeg
 import waypoint.core.pack.PackLegs
@@ -102,6 +106,56 @@ class PackFormatTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `пак с дисциплинами и задачами по выбору записался — прочитался`() {
+        val dir = Files.createTempDirectory("pack").toFile()
+        try {
+            val forest = terrain(floatArrayOf(0f, 0.5f, 1f))
+            val mtbo = terrain(floatArrayOf(0f, 0.9f), Random(11))
+            val heights = FloatArray(spec.size) { 50f + it * 0.01f }
+            val problem = PackScoreProblem(
+                id = "mtbo-score-1", title = "Задача 1", startX = -100.0, startY = 50.0, limitSeconds = 900.0,
+                controls = listOf(PackScoreControl("31", -90.0, 60.0, 10), PackScoreControl("32", -70.0, 70.0, 20)),
+                seconds = listOf(0.0, 10.0, 20.0, 11.0, 0.0, 12.0, 21.0, 13.0, 0.0),
+                paths = listOf(null, PackRoute.of(10.0, 14.0, 0.0, listOf(Vec2(-100.0, 50.0), Vec2(-90.0, 60.0))), null, null, null, null, null, null, null),
+            )
+            val infos = listOf(
+                PackDiscipline("forest", "Кросс", MapPack.terrainFile("forest"), MapPack.legsFile("forest")),
+                PackDiscipline("mtbo", "Вело", MapPack.terrainFile("mtbo"), MapPack.legsFile("mtbo"), MapPack.scoreFile("mtbo")),
+            )
+            val meta = PackMeta(
+                name = "test", title = "Тест", mapBounds = PackBox(-100.0, 50.0, -60.0, 80.0), grid = PackGrid.of(spec),
+                tiles = TileSet(PackBox(-120.0, 40.0, -40.0, 90.0), 256, listOf(TileLevel(0, 10, 10, 1.0))),
+                runnability = "ISOM 2000", maxRelativeSpeed = 1.3, scale = 4000.0, disciplines = infos,
+            )
+            val data = listOf(
+                DisciplineData(infos[0], forest, PackLegs("test", emptyList())),
+                DisciplineData(infos[1], mtbo, PackLegs("test", listOf(PackLeg("m-1", "Связка 1", -100.0, 50.0, -60.0, 80.0))), PackScoreSet(listOf(problem))),
+            )
+            PackFiles.write(dir, meta, data, heights)
+            val back = PackFiles.read(dir)
+            assertEquals(4000.0, back.meta.scale)
+            assertEquals(listOf("forest", "mtbo"), back.disciplines.map { it.info.id })
+            assertContentEquals(mtbo.speed, back.discipline("mtbo")!!.terrain.speed)
+            assertEquals(problem, back.discipline("mtbo")!!.score!!.problems[0])
+            assertEquals(12.0, back.discipline("mtbo")!!.score!!.problems[0].time(1, 2))
+            assertEquals(null, back.discipline("forest")!!.score)
+            assertTrue(File(dir, "terrain-mtbo.zbin").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `старый пак без списка дисциплин читается как кросс`() {
+        val meta = MapPack.decodeMeta("""{"version":1,"name":"a","title":"A","mapBounds":{"minX":0,"minY":0,"maxX":1,"maxY":1},""" +
+            """"grid":{"originX":0,"originY":0,"cellSize":2,"width":1,"height":1},"tiles":{"box":{"minX":0,"minY":0,"maxX":1,"maxY":1},"tileSize":256,"levels":[]},""" +
+            """"runnability":"ISOM 2000","maxRelativeSpeed":1.3}""")
+        assertEquals(7500.0, meta.scale)
+        assertEquals(listOf("forest"), meta.disciplineList().map { it.id })
+        assertEquals(MapPack.TERRAIN, meta.disciplineList()[0].terrain)
     }
 
     @Test

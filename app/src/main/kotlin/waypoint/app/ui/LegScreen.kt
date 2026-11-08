@@ -61,12 +61,10 @@ import waypoint.core.route.score
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** Радиус круга КП на местности (3 мм на карте 1:7500): линия, законченная в нём, сразу идёт на разбор. */
-private const val CONTROL_RADIUS_M = 22.5
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LegScreen(vm: GameViewModel, session: LegSession, tiles: TileCache, onBack: () -> Unit) {
+fun LegScreen(vm: GameViewModel, session: LegSession, tiles: TileCache, mapScale: Double, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val leg = session.leg
     val density = LocalDensity.current
@@ -95,6 +93,7 @@ fun LegScreen(vm: GameViewModel, session: LegSession, tiles: TileCache, onBack: 
         // «Память»: после показа карта скрыта до разбора.
         hideMap = session.mapHidden && phase !is LegPhase.Result && phase !is LegPhase.Failed,
         revealRadius = CORRIDOR_METERS,
+        mapScale = mapScale,
         routes = (phase as? LegPhase.Result)?.let { analysisRoutes(it.analysis, if (showVariants) leg.options.drop(1).map { o -> o.points() } else emptyList()) }.orEmpty(),
     )
 
@@ -127,7 +126,9 @@ fun LegScreen(vm: GameViewModel, session: LegSession, tiles: TileCache, onBack: 
                     lineEnd = session.lineEnd,
                     onStroke = { pts ->
                         session.strokes.add(pts)
-                        val reached = pts.last().distanceTo(leg.to) <= max(CONTROL_RADIUS_M, 12.0 * density.density / viewport.scale)
+                        // Круг КП — 3 мм карты: линия, законченная в нём, сразу идёт на разбор.
+                        val controlRadius = 3.0 * mapScale / 1000
+                        val reached = pts.last().distanceTo(leg.to) <= max(controlRadius, 12.0 * density.density / viewport.scale)
                         if (reached) vm.finish()
                         reached
                     },
