@@ -24,7 +24,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import waypoint.app.map.TileCache
 import waypoint.app.ui.LegListScreen
 import waypoint.app.ui.LegScreen
+import waypoint.app.ui.HelpScreen
+import waypoint.app.ui.QuizScreen
 import waypoint.app.ui.ScoreScreen
+import waypoint.app.ui.StatsScreen
+import waypoint.app.ui.SymbolsScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,6 +61,10 @@ fun WaypointApp(vm: GameViewModel = viewModel()) {
                     val session = vm.session
                     val score = vm.scoreSession
                     when {
+                        vm.screen == Screen.STATS -> StatsScreen(vm)
+                        vm.screen == Screen.SYMBOLS -> SymbolsScreen(vm)
+                        vm.screen == Screen.QUIZ -> QuizScreen(vm)
+                        vm.screen == Screen.HELP -> HelpScreen(vm)
                         session != null -> LegScreen(vm, session, tiles, state.pack.meta.scale, onBack = vm::closeLeg)
                         score != null -> ScoreScreen(vm, score, tiles, state.pack.meta.scale, onBack = vm::closeLeg)
                         else -> LegListScreen(vm, state.pack)
